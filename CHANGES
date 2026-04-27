@@ -1,5 +1,7 @@
 Version 0.5.0 (Apr 26, 2026)
 
+* Fixed readFrames processing unexpected message types instead of skipping them
+* Fixed pipe file descriptor leak on partial launch failure
 * Fixed high-severity integer overflow vulnerability by upgrading gorilla/websocket v1.4.0 → v1.5.3
 * Fixed nil pointer panic when WebSocket connection breaks during send (#342)
 * Fixed --header flag to apply to all responses, not just WebSocket upgrades
@@ -15,10 +17,27 @@ Version 0.5.0 (Apr 26, 2026)
 * Updated minimum Go version from 1.15 to 1.21
 * Replaced deprecated ioutil.ReadAll with io.ReadAll
 * Renamed noteForkCompled → noteForkCompleted (typo fix)
+* Decomposed ServeHTTP into focused handler methods (serveWebSocket, serveCGI, serveStatic, serveDevConsole)
+* Decomposed parseCommandLine into testable validation functions
+* Split PipeEndpoints into two independent goroutines for proper backpressure
+* WebSocketEndpoint.Terminate now closes connection (clean shutdown on process exit)
+* Added --pingms flag for WebSocket ping/pong dead connection detection (#456)
+* Added --sslca flag for mutual TLS client certificate verification (#413)
+* Added symlink boundary check in script directory mode (security hardening)
+* Extracted signal escalation loop in Terminate() (was 4x repeated pattern)
+* Renamed snake_case methods to camelCase (Go convention)
+* Added GitHub Actions CI across 4 platforms (Linux x86/ARM64, macOS ARM64, Windows)
+* Replaced fork tracking panic with graceful handling
+* Renamed error vars to Go convention (ErrScriptNotFound, ErrForkNotAllowed)
+* Cached dev console template license substitution at init (was per-request)
+* Renamed env.go replacers to idiomatic Go names
+* Added race detector (-race), staticcheck, and gosec to CI lint job
+* Increased test count from 7 to 217
 * Added comprehensive integration test suite (84 tests) covering core WebSocket, process management,
   CLI flags, HTTP routing, security (origin/env isolation/injection), CGI env vars, edge cases, and performance
 * Cross-platform test harness using ephemeral ports and a standalone testcmd binary (no shell dependency)
 * Added QA test plans (qa/plans/) documenting ~270 manual and automated test cases across 14 categories
+* Added k6 performance benchmarking system (bench/) with 7 scenarios, HTML reports, and CI regression detection
 
 Version 0.4.1 (Jan 24, 2021)
 

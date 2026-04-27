@@ -14,7 +14,7 @@ import (
 	"github.com/gorilla/websocket"
 )
 
-var ScriptNotFoundError = errors.New("script not found")
+var ErrScriptNotFound = errors.New("script not found")
 
 // WebsocketdHandler is a single request information and processing structure, it handles WS requests out of all that daemon can handle (static, cgi, devconsole)
 type WebsocketdHandler struct {
@@ -22,7 +22,7 @@ type WebsocketdHandler struct {
 
 	Id string
 	*RemoteInfo
-	*URLInfo // TODO: I cannot find where it's used except in one single place as URLInfo.FilePath
+	*URLInfo
 	Env      []string
 
 	command string
@@ -76,7 +76,7 @@ func (wsh *WebsocketdHandler) accept(ws *websocket.Conn, log *LogScope) {
 	if cms := wsh.server.Config.CloseMs; cms != 0 {
 		process.closetime += time.Duration(cms) * time.Millisecond
 	}
-	wsEndpoint := NewWebSocketEndpoint(ws, binary, log)
+	wsEndpoint := NewWebSocketEndpoint(ws, binary, log, wsh.server.Config.PingInterval)
 
 	PipeEndpoints(process, wsEndpoint)
 }
@@ -132,17 +132,24 @@ func GetURLInfo(path string, config *Config) (*URLInfo, error) {
 
 		// not a valid path
 		if err != nil {
-			return nil, ScriptNotFoundError
+			return nil, ErrScriptNotFound
 		}
 
 		// at the end of url but is a dir
 		if isLastPart && statInfo.IsDir() {
-			return nil, ScriptNotFoundError
+			return nil, ErrScriptNotFound
 		}
 
 		// we've hit a dir, carry on looking
 		if statInfo.IsDir() {
 			continue
+		}
+
+		// Verify the resolved path stays within the script directory.
+		// This prevents symlink attacks where a link inside ScriptDir
+		// points to an arbitrary file outside it.
+		if err := checkPathBoundary(urlInfo.FilePath, config.ScriptDir); err != nil {
+			return nil, ErrScriptNotFound
 		}
 
 		// no extra args
@@ -155,6 +162,24 @@ func GetURLInfo(path string, config *Config) (*URLInfo, error) {
 		return urlInfo, nil
 	}
 	return nil, fmt.Errorf("could not resolve script for path %q", path)
+}
+
+// checkPathBoundary resolves symlinks and verifies the real path is within the
+// allowed directory. Returns an error if the path escapes the boundary.
+func checkPathBoundary(path, boundary string) error {
+	realPath, err := filepath.EvalSymlinks(path)
+	if err != nil {
+		return err
+	}
+	realBoundary, err := filepath.EvalSymlinks(boundary)
+	if err != nil {
+		return err
+	}
+	// Ensure the resolved path starts with the resolved boundary
+	if !strings.HasPrefix(realPath, realBoundary+string(filepath.Separator)) && realPath != realBoundary {
+		return fmt.Errorf("path %q escapes boundary %q", realPath, realBoundary)
+	}
+	return nil
 }
 
 func generateId() string {

@@ -19,6 +19,7 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -69,13 +70,31 @@ func TestMain(m *testing.M) {
 	os.Exit(code)
 }
 
+// syncBuffer is a goroutine-safe bytes.Buffer for capturing stderr.
+type syncBuffer struct {
+	mu  sync.Mutex
+	buf bytes.Buffer
+}
+
+func (b *syncBuffer) Write(p []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.Write(p)
+}
+
+func (b *syncBuffer) String() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.String()
+}
+
 // Server wraps a running websocketd instance for testing.
 type Server struct {
 	t          *testing.T
 	Port       int
 	IsHTTPS    bool
 	cmd        *exec.Cmd
-	stderr     bytes.Buffer
+	stderr     syncBuffer
 	stderrDone chan struct{}
 }
 
@@ -444,16 +463,6 @@ func writeFile(dir, name, content string) error {
 	return os.WriteFile(filepath.Join(dir, name), []byte(content), 0644)
 }
 
-// containsLine checks if any line in text matches the expected string.
-func containsLine(text, expected string) bool {
-	for _, line := range strings.Split(text, "\n") {
-		if strings.TrimSpace(line) == expected {
-			return true
-		}
-	}
-	return false
-}
-
 // findEnvValue finds the value of an environment variable in env dump output.
 func findEnvValue(envOutput, varName string) (string, bool) {
 	prefix := varName + "="
@@ -463,6 +472,23 @@ func findEnvValue(envOutput, varName string) (string, bool) {
 		}
 	}
 	return "", false
+}
+
+// retryConnect polls until a new WebSocket connection succeeds and receives
+// a message, or fails the test after timeout. Use this instead of time.Sleep
+// when verifying that the server is still alive after a disconnect.
+func (s *Server) retryConnect(t *testing.T, path string, timeout time.Duration) *WSClient {
+	t.Helper()
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		ws, _, err := s.TryConnect(path, nil)
+		if err == nil {
+			return ws
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	t.Fatalf("could not reconnect to server within %v", timeout)
+	return nil
 }
 
 // collectMessages reads all messages until the connection closes or timeout.
